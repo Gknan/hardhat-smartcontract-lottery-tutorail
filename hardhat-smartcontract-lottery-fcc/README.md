@@ -199,20 +199,124 @@ Add hardhat to project
 
     ```
 
-3.  Interact with ChainlinkVRP
-    ```sh
-    yarn hardhat node
+3.  Interact with [ChainlinkVRP](https://docs.chain.link/docs/vrf/v2/subscription/examples/get-a-random-number/)
+
+    ```javascript
+    import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol"
+
+    function fulfillRandomWords(
+        uint256 requestId,
+        uint256[] memory randomWords
+    ) internal override {}
     ```
-4.  Install Metamask Plugin in Chrome
-5.  Copy node RPCURL in Metamask to add Hardhat localhost network
-6.  Copy node account to import into Metamask
-7.  Copy harhhat contract address and `artifacts/abi` in `constants.js`
+
+    run `yarn add --dev @chainlink/contracts` on console
+
+4.  `yarn hardhat compile` on console, check codes
+5.  Add `hardhat-shorthand` plugin. `sudo npm install --global hardhat-shorthan`
+6.  Raffle getRandomWords, pick winner
 
     ```js
-    export const contractAddress = "YOUR HARDHAT CONTRACT ADDRESS"
+        function requestRandomWinner() external {
+        // Request the random number
+        // requestId to slove multi requests to VRF for random https://docs.chain.link/docs/vrf/v2/security/#fulfillrandomwords-must-not-revert
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane, // gas lane
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
+        // once we get it, do something with it
+        emit RequestRaffleWinner(requestId);
+        //
+    }
 
-    export const abi = "YOUR ABI INFO"
+    function fulfillRandomWords(
+        uint256 /*requestId*/,
+        uint256[] memory randomWords
+    ) internal override {
+        // random words module operation
+        // get winner index from randomWords
+        uint256 indexOfWinner = randomWords[0] % s_players.length;
+        // set recent winner address
+        address payable recentWinner = s_players[indexOfWinner];
+        s_recentWinner = recentWinner;
+        // send all the money to winner
+        (bool success, ) = recentWinner.call{value: address(this).balance}(""); // send all money to winner
+        // require(success)
+        if (!success) {
+            revert Raffle__TransferFailed();
+        }
+        emit WinnerPicked(recentWinner);
+    }
     ```
+
+7.  Interract with Chainlink VRF
+    implements checkUpkeep, Chainlink node call this function to decide whether return a random varaible
+
+    ```js
+    import "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
+    contract Raffle is VRFConsumerBaseV2, AutomationCompatibleInterface {
+
+      /**
+       * @dev This is the function that chianlink nodes call, they look for the `upkeepNeeded` to return
+      * true. The following should be true in order to return true.
+      * 1. Out time interval should have passed.
+      * 2. The lottery should have at least one player, and have some ETH
+      * 3. Our subscription is funded with LINK
+      * 4. The lottery should be "open" state
+      *
+      */
+      function checkUpkeep(
+          bytes calldata /*checkData */
+      ) external override returns (bool upkeepNeeded, bytes memory /* performData */) {
+          bool isOpen = (RaffleState.OPEN == s_raffleState);
+          // block.timestamp - last block.timestamp > interval
+          bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
+          bool hasPlayers = (s_players.length > 0);
+          bool hasBalance = address(this).balance > 0;
+          upkeepNeeded = (isOpen && timePassed && hasPlayers && hasBalance);
+      }
+    }
+    ```
+
+8.  Implement `performUpkeep` function. Actually, out `requestRandomWinner` is `performUpkeep` funciton. Change name. Make checkUpkeep to public, so we can call it in performUpkeep.
+
+    ```js
+    function checkUpkeep(
+        bytes calldata /*checkData */
+    ) public override returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool isOpen = (RaffleState.OPEN == s_raffleState);
+        // block.timestamp - last block.timestamp > interval
+        bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
+        bool hasPlayers = (s_players.length > 0);
+        bool hasBalance = address(this).balance > 0;
+        upkeepNeeded = (isOpen && timePassed && hasPlayers && hasBalance);
+    }
+    function performUpkeep(bytes calldata /* performData */) external override {
+        // Request the random number
+        // requestId to slove multi requests to VRF for random https://docs.chain.link/docs/vrf/v2/security/#fulfillrandomwords-must-not-revert
+        (bool upkeepNeeded, ) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle_UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_raffleState));
+        }
+        s_raffleState = RaffleState.CALCULATING;
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane, // gas lane
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
+        // once we get it, do something with it
+        emit RequestRaffleWinner(requestId);
+        //
+    }
+    ```
+
+9.  Add comments for your contracts, variables, functions, views, etc. Be professional.
+10. Deploy Raffle.sol
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
